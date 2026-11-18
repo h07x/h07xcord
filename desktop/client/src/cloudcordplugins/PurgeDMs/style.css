@@ -1,0 +1,24 @@
+.cc-purge-bar {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: var(--background-floating, #111214);
+    color: var(--text-normal, #dbdee1);
+    box-shadow: var(--elevation-high, 0 8px 16px rgb(0 0 0 / 24%));
+    font-size: 14px;
+}
+
+.cc-purge-cancel {
+    padding: 4px 12px;
+    border-radius: 4px;
+    background: var(--button-danger-background, #da373c);
+    color: #fff;
+    cursor: pointer;
+}

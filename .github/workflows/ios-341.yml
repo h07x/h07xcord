@@ -1,0 +1,126 @@
+name: Build CloudCord iOS 344.1
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: cloudcord-ios-344-release
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Build CloudCord Runtime"]
+    branches: [main]
+    types: [completed]
+
+jobs:
+  build:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    # Repackage whenever the verified 344-compatible runtime changes.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Download the completed runtime build
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: cloudcord-mobile-shared-runtime
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/cloudcord-runtime
+
+      - name: Verify runtime for packaging
+        env:
+          EXPECTED_RUNTIME_SOURCE: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [ -n "$EXPECTED_RUNTIME_SOURCE" ]; then
+            python3 ios/scripts/verify-runtime-artifact.py "$RUNNER_TEMP/cloudcord-runtime/dist"
+            cp "$RUNNER_TEMP/cloudcord-runtime/dist/cc.js" dist/cc.js
+          else
+            python3 ios/scripts/verify-runtime-artifact.py dist
+          fi
+
+      - name: Verify original Rain loader and CloudCord adapter
+        run: |
+          node ios/scripts/test-original-rain.cjs
+          clang -fobjc-arc -framework Foundation ios/scripts/test-runtime-cache.m -o "$RUNNER_TEMP/cloudcord-runtime-cache-test"
+          "$RUNNER_TEMP/cloudcord-runtime-cache-test"
+
+      - name: Install signing tools
+        run: brew install ldid
+
+      - name: Download private Discord 344.1 base
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download ios-base-344 \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern Discord-344.1-base.ipa \
+            --output Discord-344.1-base.ipa
+
+      - name: Build file-only CloudCord adapter
+        run: |
+          xcrun --sdk iphoneos clang -arch arm64 -fobjc-arc -dynamiclib \
+            -miphoneos-version-min=14.0 -framework Foundation \
+            -install_name @executable_path/Frameworks/CloudCordBootstrap.dylib \
+            ios/rain-original/CloudCordBootstrap.m -o CloudCordBootstrap.dylib
+
+      - name: Package Discord 344.1 IPA
+        run: |
+          python3 ios/scripts/package-cloudcord-ipa.py \
+            --discord-ipa Discord-344.1-base.ipa \
+            --discord-version 344.1 \
+            --rain-loader ios/rain-original/RainTweak.dylib.b64 \
+            --rain-bootstrap CloudCordBootstrap.dylib \
+            --runtime-js dist/cc.js \
+            --output cloudcord0.ipa
+          unzip -p cloudcord0.ipa Payload/Discord.app/Info.plist | grep -q '<string>344.1</string>'
+          python3 ios/scripts/verify-original-rain-ipa.py cloudcord0.ipa
+          python3 ios/scripts/test-broadcast-capabilities.py
+          python3 ios/scripts/verify-broadcast-ipa.py cloudcord0.ipa
+          cmp dist/cc.js <(unzip -p cloudcord0.ipa Payload/Discord.app/BunnyResources.bundle/runtime.js)
+          unzip -p cloudcord0.ipa Payload/Discord.app/BunnyResources.bundle/runtime.js | grep -q 'CloudCord'
+          unzip -l cloudcord0.ipa | grep -q 'Payload/Discord.app/PlugIns/BroadcastUpload.appex/BroadcastUpload'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CloudCord-iOS-344.1
+          path: cloudcord0.ipa
+
+      - name: Package startup diagnostic IPA
+        run: |
+          python3 ios/scripts/package-cloudcord-ipa.py \
+            --discord-ipa Discord-344.1-base.ipa \
+            --discord-version 344.1 \
+            --rain-loader ios/rain-original/RainTweak.dylib.b64 \
+            --rain-bootstrap CloudCordBootstrap.dylib \
+            --runtime-js dist/cc.js \
+            --startup-diagnostics \
+            --output cloudcord-diagnostics.ipa
+          cmp dist/cc.js <(unzip -p cloudcord-diagnostics.ipa Payload/Discord.app/BunnyResources.bundle/runtime.js)
+
+      - name: Package standalone IPA (own bundle ID)
+        run: |
+          python3 ios/scripts/package-cloudcord-ipa.py             --discord-ipa Discord-344.1-base.ipa             --discord-version 344.1             --rain-loader ios/rain-original/RainTweak.dylib.b64             --rain-bootstrap CloudCordBootstrap.dylib             --runtime-js dist/cc.js             --bundle-id app.cloudcord.ios             --display-name CloudCord             --output cloudcord-standalone.ipa
+          unzip -p cloudcord-standalone.ipa Payload/Discord.app/Info.plist | grep -q '<string>app.cloudcord.ios</string>'
+          unzip -p cloudcord-standalone.ipa Payload/Discord.app/PlugIns/BroadcastUpload.appex/Info.plist | grep -q '<string>app.cloudcord.ios.'
+          if unzip -p cloudcord-standalone.ipa Payload/Discord.app/Info.plist | grep -q '<string>com.hammerandchisel.discord</string>'; then echo 'Standalone IPA still has Discord bundle ID'; exit 1; fi
+          cmp dist/cc.js <(unzip -p cloudcord-standalone.ipa Payload/Discord.app/BunnyResources.bundle/runtime.js)
+
+      - name: Publish CloudCord iOS 344.1 test download
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: test
+          name: CloudCord 344.1 Testing
+          prerelease: true
+          make_latest: false
+          files: |
+            cloudcord0.ipa
+            cloudcord-standalone.ipa
+            cloudcord-diagnostics.ipa

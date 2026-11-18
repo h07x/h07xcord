@@ -1,0 +1,371 @@
+name: CloudCord Desktop
+concurrency:
+  group: cloudcord-desktop-release-${{ github.ref }}
+  # Finish the running release so frequent repair commits cannot starve the
+  # public download. GitHub keeps the newest pending build in this group.
+  cancel-in-progress: false
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "desktop/**"
+      - "ios/scripts/test-custom-social-render.cjs"
+      - ".github/workflows/desktop.yml"
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout CloudCord
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.0.9
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.2"
+          cache-dependency-path: desktop/client/installer/go.sum
+
+      - name: Check interrupted installer downloads
+        run: go test desktop/client/installer/runtime_download.go desktop/client/installer/runtime_download_test.go desktop/client/installer/operation.go desktop/client/installer/operation_test.go
+
+      - name: Install Windows resource tool
+        shell: bash
+        run: go install github.com/tc-hib/go-winres@v0.3.3
+
+      - name: Verify required source files
+        shell: bash
+        run: |
+          set -e
+
+          test -f desktop/client/package.json
+          test -f desktop/client/scripts/build/build.mjs
+          test -f desktop/client/scripts/build-installer.sh
+          test -d desktop/client
+
+      - name: Print tool versions
+        shell: bash
+        run: |
+          node --version
+          pnpm --version
+          go version
+          gcc --version || true
+
+      - name: Install dependencies
+        working-directory: desktop/client
+        shell: bash
+        run: |
+          set -e
+          pnpm install --frozen-lockfile=false
+
+      - name: Check CloudCord profile sync and tab layout
+        working-directory: desktop/client
+        shell: bash
+        run: |
+          set -e
+          node scripts/test-connection-settings.cjs
+          node scripts/test-ccp.cjs
+          node scripts/test-local-relationship-actions.cjs
+          node scripts/test-local-gift-preview.cjs
+          node scripts/test-profile-editor-text.cjs
+          node scripts/test-partial-cosmetics-catalog.cjs
+          node scripts/test-unloaded-member-role.cjs
+          node scripts/test-cloudcord-badge-sync.cjs
+          node scripts/test-pc-nitro-override.cjs
+          node scripts/test-profile-hook-lifecycle.cjs
+          node scripts/test-profile-network-timeout.cjs
+          node scripts/test-fake-messages.cjs
+          node scripts/test-server-clone.cjs
+
+      - name: Check shared custom friend and connection previews
+        env:
+          NODE_PATH: ${{ github.workspace }}/desktop/client/node_modules
+        run: |
+          node desktop/client/scripts/test-custom-social.cjs
+          node desktop/client/scripts/test-custom-social-transport.cjs
+          node desktop/client/scripts/test-custom-social-ui.cjs
+          node desktop/client/scripts/test-native-social-hooks.cjs
+          node ios/scripts/test-custom-social-render.cjs
+
+      - name: Check staff badge contrast after profile mount
+        working-directory: desktop/client
+        shell: bash
+        run: |
+          set -e
+          node scripts/test-staff-badge-surface.cjs
+          node scripts/test-badge-provider-isolation.cjs
+          node scripts/test-profile-restore-races.cjs
+          node scripts/test-profile-image-races.cjs
+
+      - name: Check cross-platform badge catalog and tier selection
+        # Reuse desktop's esbuild to compile the generated mobile editor too.
+        run: |
+          node ios/scripts/test-extra-badges.cjs
+          node ios/scripts/test-badge-layout.cjs
+          node ios/scripts/test-staff-roster.cjs
+          node ios/scripts/test-real-profile-view.cjs
+          node ios/scripts/test-profile-sync-regressions.cjs
+
+      - name: Check runtime user plugin installation
+        working-directory: desktop/client
+        run: node scripts/test-runtime-userplugins.cjs
+
+      - name: Check settings focus and plugin input handling
+        working-directory: desktop/client
+        run: |
+          node scripts/test-settings-focus.cjs
+          node scripts/test-addons-navigation.cjs
+          NODE_PATH="$PWD/node_modules" node ../../ios/scripts/test-cx.cjs
+          node scripts/test-cx-bulk-plugins.cjs
+          node scripts/test-plugin-pagination.cjs
+          node scripts/test-theme-catalog.cjs
+          node scripts/test-plugin-text-inputs.cjs
+          node scripts/test-settings-load.cjs
+          node scripts/test-titlebar.cjs
+          node scripts/test-settings-storage.cjs
+          node scripts/test-addon-navigation.cjs
+
+      - name: Typecheck
+        working-directory: desktop/client
+        shell: bash
+        run: |
+          pnpm typecheck
+
+      - name: Build browser clients
+        working-directory: desktop/client
+        shell: bash
+        run: |
+          set -e
+          pnpm buildWeb
+          unzip -l dist/extension-chrome.zip | grep -q 'dist/CloudCord.js'
+          unzip -l dist/extension-firefox.zip | grep -q 'dist/CloudCord.js'
+          for archive in dist/extension-chrome.zip dist/extension-firefox.zip; do
+            unzip -p "$archive" dist/cx/midnight.cx > /dev/null
+            unzip -p "$archive" dist/cx/pilot/character-counter.cx > /dev/null
+          done
+          if unzip -l dist/extension-chrome.zip | grep -q 'dist/Discord.js'; then
+            echo "stale Discord.js found in Chrome package"
+            exit 1
+          fi
+          if unzip -l dist/extension-firefox.zip | grep -q 'dist/Discord.js'; then
+            echo "stale Discord.js found in Firefox package"
+            exit 1
+          fi
+          test -f dist/CloudCord.user.js
+
+      - name: Upload browser clients
+        uses: actions/upload-artifact@v4
+        with:
+          name: CloudCord-Web
+          path: |
+            desktop/client/dist/extension-chrome.zip
+            desktop/client/dist/extension-firefox.zip
+            desktop/client/dist/CloudCord.user.js
+
+      - name: Build desktop runtime
+        working-directory: desktop/client
+        shell: bash
+        run: |
+          set -e
+          pnpm build --standalone
+
+      - name: Verify desktop runtime output
+        shell: bash
+        run: |
+          set -e
+
+          if [ ! -d "desktop/client/dist/desktop" ]; then
+            echo "desktop/client/dist/desktop was not produced"
+            find desktop/client/dist -maxdepth 3 -type f 2>/dev/null || true
+            exit 1
+          fi
+
+      - name: Guard desktop runtime against stale Sincord endpoints
+        shell: bash
+        run: |
+          set -e
+          target="desktop/client/dist/desktop"
+          if [ ! -d "$target" ]; then
+            echo "desktop runtime output missing: $target"
+            exit 1
+          fi
+          if rg -a -n -i "https?://(badge|badges|themes)\.sincord\.org" "$target" --glob '!*.map' --glob '!*.LEGAL.txt'; then
+            echo "Stale Sincord endpoint detected in the production desktop runtime."
+            exit 1
+          fi
+
+      - name: Build Windows installer
+        working-directory: desktop/client/installer
+        shell: bash
+        run: |
+          set -e
+          # Wails on Windows is pure Go (WebView2 is part of Windows), so no C toolchain
+          # or static MinGW linking is needed. Version info is stamped from the run number.
+          ver="1.0.${{ github.run_number }}.0"
+          sed -i "s/1\.0\.0\.0/$ver/g" winres/winres.json
+          "$(go env GOPATH)/bin/go-winres" make --in winres/winres.json
+          common="-H=windowsgui -X 'sinlotl/buildinfo.InstallerGitHash=${{ github.sha }}'"
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -tags "desktop,production"             -ldflags "$common -X 'sinlotl/buildinfo.InstallerTag=cloudcord'" -o CloudCordSetup.exe .
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -tags "desktop,production"             -ldflags "$common -X 'main.IsTestBuildStr=1' -X 'sinlotl/buildinfo.InstallerTag=cloudcord-test'" -o CloudCordSetup-Test.exe .
+
+      - name: Build Linux installer
+        working-directory: desktop/client/installer
+        shell: bash
+        run: |
+          set -e
+          # The command-line installer is pure Go, so it cross-compiles from this runner.
+          for arch in amd64 arm64; do
+            suffix=""
+            if [ "$arch" = arm64 ]; then suffix="-aarch64"; fi
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -tags cli \
+              -ldflags "-s -w -X 'sinlotl/buildinfo.InstallerGitHash=${{ github.sha }}' -X 'sinlotl/buildinfo.InstallerTag=cloudcord'" \
+              -o "CloudCordSetupCli-Linux$suffix" .
+          done
+          test -s CloudCordSetupCli-Linux
+          test -s CloudCordSetupCli-Linux-aarch64
+
+      - name: Stage artifacts
+        shell: bash
+        run: |
+          set -e
+          mkdir -p desktop/client/dist
+
+          if [ -f "desktop/client/installer/CloudCordSetup.exe" ]; then
+            cp "desktop/client/installer/CloudCordSetup.exe" "desktop/client/dist/CloudCordSetup.exe"
+          fi
+          if [ -f "desktop/client/installer/CloudCordSetup-Test.exe" ]; then
+            cp "desktop/client/installer/CloudCordSetup-Test.exe" "desktop/client/dist/CloudCordSetup-Test.exe"
+          fi
+
+          if [ -f "desktop/client/dist/CloudCordSetup.exe" ]; then
+            cp "desktop/client/dist/CloudCordSetup.exe" "desktop/client/dist/cloudcord.exe"
+            # Old links to CloudCordInstaller.exe get the same new installer.
+            cp "desktop/client/dist/CloudCordSetup.exe" "desktop/client/dist/CloudCordInstaller.exe"
+          fi
+          if [ -f "desktop/client/dist/CloudCordSetup-Test.exe" ]; then
+            cp "desktop/client/dist/CloudCordSetup-Test.exe" "desktop/client/dist/cloudcord-test.exe"
+          elif [ -f "desktop/client/dist/CloudCordSetup.exe" ]; then
+            cp "desktop/client/dist/CloudCordSetup.exe" "desktop/client/dist/CloudCordSetup-Test.exe"
+            cp "desktop/client/dist/CloudCordSetup.exe" "desktop/client/dist/cloudcord-test.exe"
+          fi
+
+          cp desktop/client/installer/CloudCordSetupCli-Linux desktop/client/installer/CloudCordSetupCli-Linux-aarch64 desktop/client/installer/install.sh desktop/client/dist/
+
+          test -f desktop/client/dist/CloudCordSetup.exe
+          test -f desktop/client/dist/CloudCordSetup-Test.exe
+          test -d desktop/client/dist
+
+      - name: Upload desktop artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CloudCordDesktop-Windows
+          path: |
+            desktop/client/dist/CloudCordSetup.exe
+            desktop/client/dist/desktop/**
+            desktop/client/CREDITS.md
+            desktop/client/CLOUDCORD_NOTES.md
+            desktop/client/README.md
+
+      - name: Package desktop.asar for updater
+        shell: bash
+        run: |
+          set -e
+          # The built runtime is the desktop folder; package it for the in-app updater.
+          npm install -g @electron/asar --quiet 2>/dev/null || true
+          asar pack desktop/client/dist/desktop desktop/client/dist/desktop.asar
+          cp desktop/client/dist/desktop.asar desktop/client/dist/cloudcord.asar
+          sha256sum desktop/client/dist/cloudcord.asar > desktop/client/dist/cloudcord.asar.sha256
+          cp desktop/client/dist/desktop.asar desktop/client/dist/runtime
+          cp desktop/client/dist/desktop.asar desktop/client/dist/desktop-test.asar
+          cp desktop/client/dist/desktop.asar desktop/client/dist/cloudcord-test.asar
+          test -f desktop/client/dist/desktop.asar
+
+      - name: Check desktop release order
+        id: desktop_release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! published=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/new_beta_t_desktop" --jq .name 2>&1); then
+            if [[ "$published" != *"HTTP 404"* ]]; then
+              printf '%s\n' "$published" >&2
+              exit 1
+            fi
+            published=
+          fi
+          if [[ "$published" =~ ^CloudCord[[:space:]]Desktop[[:space:]]([0-9a-f]{40})$ ]]; then
+            published_sha=${BASH_REMATCH[1]}
+            if [[ "$published_sha" != "$GITHUB_SHA" ]]; then
+              # A queued or rerun build can be older than the public release.
+              order=$(gh api "repos/$GITHUB_REPOSITORY/compare/$GITHUB_SHA...$published_sha" --jq .status)
+              if [[ "$order" == "ahead" ]]; then
+                echo "Skipping release upload because $published_sha is already published."
+                echo "publish=false" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            fi
+          fi
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+
+      - name: Upload binaries to GitHub Release (Production)
+        if: github.ref == 'refs/heads/main' && steps.desktop_release.outputs.publish == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: new_beta_t_desktop
+          name: CloudCord Desktop ${{ github.sha }}
+          make_latest: true
+          files: |
+            desktop/client/dist/desktop.asar
+            desktop/client/dist/cloudcord.asar
+            desktop/client/dist/cloudcord.asar.sha256
+            desktop/client/dist/runtime
+            desktop/client/dist/CloudCordSetup.exe
+            desktop/client/dist/cloudcord.exe
+            desktop/client/dist/CloudCordInstaller.exe
+            desktop/client/dist/CloudCordSetup-Test.exe
+            desktop/client/dist/CloudCordSetupCli-Linux
+            desktop/client/dist/CloudCordSetupCli-Linux-aarch64
+            desktop/client/dist/install.sh
+            desktop/client/dist/cloudcord-test.exe
+            desktop/client/dist/desktop-test.asar
+            desktop/client/dist/cloudcord-test.asar
+            desktop/client/dist/extension-chrome.zip
+            desktop/client/dist/extension-firefox.zip
+            desktop/client/dist/CloudCord.user.js
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload binaries to GitHub Release (Isolated Test Channel)
+        if: github.ref == 'refs/heads/main' && steps.desktop_release.outputs.publish == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: new_beta_test_desktop
+          name: CloudCord Desktop Test ${{ github.sha }}
+          prerelease: true
+          files: |
+            desktop/client/dist/CloudCordSetup-Test.exe
+            desktop/client/dist/CloudCordSetupCli-Linux
+            desktop/client/dist/CloudCordSetupCli-Linux-aarch64
+            desktop/client/dist/install.sh
+            desktop/client/dist/cloudcord-test.exe
+            desktop/client/dist/desktop-test.asar
+            desktop/client/dist/cloudcord-test.asar
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

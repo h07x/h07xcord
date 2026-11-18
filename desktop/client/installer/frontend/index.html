@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CloudCord Setup</title>
+<style>
+  :root {
+    --bg: #0e0e0e;
+    --panel: #151515;
+    --line: #242424;
+    --line-strong: #333;
+    --text: #f2f2f2;
+    --muted: #8a8a8a;
+    --faint: #5a5a5a;
+    --ok: #9be29b;
+    --bad: #ff8a80;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    user-select: none; overflow: hidden;
+    display: grid; grid-template-columns: 330px 1fr; grid-template-rows: 40px 1fr;
+  }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  button:disabled { cursor: default; }
+
+  /* title bar */
+  .bar { grid-column: 1 / -1; display: flex; align-items: center; --wails-draggable: drag;
+         border-bottom: 1px solid var(--line); padding-left: 18px; }
+  .bar .name { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+  .bar .sp { flex: 1; }
+  .bar button { --wails-draggable: no-drag; width: 46px; height: 40px; background: none; border: 0; color: var(--muted); }
+  .bar button:hover { background: #1d1d1d; color: var(--text); }
+  .bar button.x:hover { background: #c42b1c; color: #fff; }
+  .bar svg { width: 10px; height: 10px; }
+
+  /* left side */
+  .side { border-right: 1px solid var(--line); position: relative; overflow: hidden;
+          display: flex; flex-direction: column; justify-content: flex-end; padding: 28px; }
+  .side { background: linear-gradient(#101010, #181818); }
+  .sky { position: absolute; inset: 0; }
+  .puff { position: absolute; background: #aaa; border-radius: 50%; opacity: .1; filter: blur(8px);
+          animation: drift linear infinite; }
+  @keyframes drift { from { transform: translateX(-140px); } to { transform: translateX(480px); } }
+  /* same motion as the server icon: float, glow, a shine sweep, and a floor shadow */
+  .hero { position: absolute; left: 50%; top: 40%; width: 220px; transform: translate(-50%, -50%); }
+  .cloud { position: relative; aspect-ratio: 1097 / 603; animation: bob 2.4s ease-in-out infinite;
+           filter: drop-shadow(0 0 26px rgba(200,200,200,.45)); }
+  .cloud i { position: absolute; inset: 0; background: #f8f8f8;
+             -webkit-mask: url(cloud.png) center / contain no-repeat; mask: url(cloud.png) center / contain no-repeat; overflow: hidden; }
+  .cloud i::after { content: ""; position: absolute; top: -20%; bottom: -20%; width: 28%; left: 0;
+                    background: linear-gradient(100deg, transparent, rgba(255,255,255,1) 50%, transparent);
+                    filter: blur(6px); transform: skewX(-18deg) translateX(-160%); animation: shine 2.4s linear infinite; }
+  .cloud i::before { content: ""; position: absolute; inset: 0; background: #e6e6e6; }
+  .hero::after { content: ""; display: block; height: 14px; margin: 38px auto 0; width: 62%;
+                 background: radial-gradient(closest-side, rgba(0,0,0,.95), transparent); animation: shadow 2.4s ease-in-out infinite; }
+  @keyframes bob { 25% { transform: translateY(-10px); } 75% { transform: translateY(10px); } }
+  @keyframes shadow { 25% { transform: scaleX(.92); } 75% { transform: scaleX(1.06); } }
+  @keyframes shine { 0% { transform: skewX(-18deg) translateX(-160%); } 60%, 100% { transform: skewX(-18deg) translateX(520%); } }
+  .brand { position: relative; }
+  .brand h1 { font-size: 34px; font-weight: 700; letter-spacing: -.02em; line-height: 1; }
+  .brand h1 span { color: var(--faint); }
+  .brand p { color: var(--muted); margin-top: 8px; max-width: 250px; }
+  .ver { position: relative; margin-top: 18px; font-size: 12px; color: var(--faint); }
+  .ver a { color: var(--text); text-decoration: underline; cursor: pointer; }
+
+  /* right side */
+  main { padding: 28px 32px; display: flex; flex-direction: column; min-height: 0; }
+  .label { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted);
+           display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .label button { background: none; border: 0; color: var(--muted); font-size: 12px; letter-spacing: 0; text-transform: none; }
+  .label button:hover { color: var(--text); }
+  .list { display: flex; flex-direction: column; gap: 8px; overflow: auto; flex: 1; min-height: 0; padding-right: 4px; }
+  .opt { display: grid; grid-template-columns: 18px 1fr auto; gap: 12px; align-items: center; text-align: left;
+         background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .opt:hover { border-color: var(--line-strong); }
+  .opt.on { border-color: var(--text); }
+  .dot { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--faint); position: relative; }
+  .opt.on .dot { border-color: var(--text); }
+  .opt.on .dot::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; background: var(--text); }
+  .opt b { font-weight: 600; display: block; }
+  .opt small { color: var(--muted); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 330px; }
+  .tag { font-size: 11px; padding: 3px 8px; border-radius: 99px; border: 1px solid var(--line-strong); color: var(--muted); white-space: nowrap; }
+  .tag.yes { color: var(--bg); background: var(--text); border-color: var(--text); }
+  .empty { color: var(--muted); padding: 14px; border: 1px dashed var(--line-strong); border-radius: 10px; }
+
+  .status { min-height: 40px; margin: 14px 0 12px; color: var(--muted); display: flex; align-items: center; gap: 10px; }
+  .spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--line-strong); border-top-color: var(--text);
+          animation: spin .8s linear infinite; flex: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .track { height: 2px; background: var(--line); border-radius: 2px; overflow: hidden; margin-top: -6px; margin-bottom: 12px; }
+  .track i { display: block; height: 100%; width: 35%; background: var(--text); animation: slide 1.2s ease-in-out infinite; }
+  @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+
+  .actions { display: grid; grid-template-columns: 1fr auto; gap: 10px; }
+  .primary { height: 46px; border-radius: 10px; border: 0; background: var(--text); color: var(--bg); font-weight: 600; font-size: 15px;
+             transition: transform .12s, opacity .12s; }
+  .primary:hover:not(:disabled) { transform: translateY(-1px); }
+  .primary:disabled, .ghost:disabled { opacity: .35; }
+  .ghost { height: 46px; padding: 0 18px; border-radius: 10px; background: none; border: 1px solid var(--line-strong); color: var(--muted); }
+  .ghost:hover:not(:disabled) { color: var(--bad); border-color: var(--bad); }
+
+  /* result sheet */
+  .sheet { position: fixed; inset: 40px 0 0 330px; background: rgba(14,14,14,.94); display: none;
+           align-items: center; justify-content: center; padding: 40px; }
+  .sheet.show { display: flex; animation: fade .18s ease-out; }
+  @keyframes fade { from { opacity: 0; } }
+  .card { max-width: 400px; }
+  .mark { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; margin-bottom: 18px; border: 1.5px solid; }
+  .mark svg { width: 20px; height: 20px; }
+  .card h2 { font-size: 22px; letter-spacing: -.01em; }
+  .card p { color: var(--muted); margin: 8px 0 22px; white-space: pre-wrap; user-select: text; }
+  .card .primary { width: 140px; }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <span class="name">CloudCord Setup</span>
+    <span class="sp"></span>
+    <button onclick="go('Minimise')" title="Minimise"><svg viewBox="0 0 10 10"><path d="M0 5h10" stroke="currentColor"/></svg></button>
+    <button class="x" onclick="go('Quit')" title="Close"><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor"/></svg></button>
+  </div>
+
+  <aside class="side">
+    <div class="sky" id="sky"></div>
+    <div class="hero"><div class="cloud"><i></i></div></div>
+    <div class="brand">
+      <h1>cloud<span>cord</span></h1>
+      <p>Plugins, themes and profile extras for the Discord desktop app.</p>
+    </div>
+    <div class="ver" id="ver"></div>
+  </aside>
+
+  <main>
+    <div class="label">Discord install <button id="rescan">Rescan</button></div>
+    <div class="list" id="list"></div>
+    <div class="status" id="status"></div>
+    <div class="actions">
+      <button class="primary" id="install">Install</button>
+      <button class="ghost" id="remove">Uninstall</button>
+    </div>
+  </main>
+
+  <div class="sheet" id="sheet">
+    <div class="card">
+      <div class="mark" id="mark"></div>
+      <h2 id="title"></h2>
+      <p id="msg"></p>
+      <button class="primary" id="close">Done</button>
+    </div>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const go = (m, ...a) => window.go.main.App[m](...a);
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  let state = { installs: [] }, pick = 0, custom = "";
+
+  // drifting background clouds
+  for (let i = 0; i < 6; i++) {
+    const p = document.createElement("i");
+    const w = 60 + Math.random() * 90;
+    p.className = "puff";
+    Object.assign(p.style, { width: w + "px", height: w * 0.55 + "px", top: Math.random() * 90 + "%",
+      animationDuration: 22 + Math.random() * 26 + "s", animationDelay: -Math.random() * 40 + "s" });
+    $("sky").appendChild(p);
+  }
+
+  function selected() {
+    return pick < state.installs.length ? state.installs[pick] : null;
+  }
+
+  function render() {
+    const list = $("list");
+    list.innerHTML = "";
+    if (!state.installs.length) {
+      list.insertAdjacentHTML("beforeend", `<div class="empty">No Discord install found. Install Discord first, or pick its folder below.</div>`);
+    }
+    state.installs.forEach((d, i) => list.insertAdjacentHTML("beforeend",
+      `<button class="opt ${i === pick ? "on" : ""}" data-i="${i}"><span class="dot"></span>
+        <span><b>${esc(d.label)} Discord</b><small>${esc(d.path)}</small></span>
+        <span class="tag ${d.patched ? "yes" : ""}">${d.patched ? "Installed" : "Not installed"}</span></button>`));
+    const ci = state.installs.length;
+    list.insertAdjacentHTML("beforeend",
+      `<button class="opt ${pick === ci ? "on" : ""}" data-i="${ci}"><span class="dot"></span>
+        <span><b>Another folder…</b><small>${esc(custom || "Choose where Discord is installed")}</small></span><span></span></button>`);
+    list.querySelectorAll(".opt").forEach((el) => el.onclick = async () => {
+      if (state.busy) return;
+      pick = +el.dataset.i;
+      if (pick === ci) custom = (await go("PickFolder")) || custom;
+      render();
+    });
+
+    const sel = selected();
+    $("install").textContent = sel && sel.patched ? "Update / Repair" : "Install";
+    $("install").disabled = state.busy || !state.releaseReady || (pick === ci && !custom);
+    $("remove").disabled = state.busy || (sel ? !sel.patched : !custom);
+    $("rescan").disabled = state.busy;
+
+    const st = $("status");
+    if (state.busy) st.innerHTML = `<span class="spin"></span>${esc(state.status)}`;
+    else if (!state.releaseReady) st.innerHTML = `<span class="spin"></span>Checking for the latest CloudCord build…`;
+    else st.textContent = sel && sel.patched ? "Updating keeps your plugins, themes, fonts and settings." : "Discord will close while CloudCord installs.";
+    document.querySelector(".track")?.remove();
+    if (state.busy) st.insertAdjacentHTML("afterend", `<div class="track"><i></i></div>`);
+
+    $("ver").innerHTML = (state.version && state.version !== "Unknown" ? `Build ${esc(state.version)}` : "Development build") +
+      (state.updateAvailable ? ` · <a id="upd">A newer installer is available</a>` : "");
+    if ($("upd")) $("upd").onclick = () => go("OpenURL", state.downloadUrl);
+  }
+
+  async function refresh() { state = await go("State"); render(); }
+
+  async function act(method, ...args) {
+    const err = await go(method, ...args);
+    if (err) show(false, "Nothing was changed", err);
+    refresh();
+  }
+
+  function show(ok, title, msg) {
+    $("mark").style.color = ok ? "var(--ok)" : "var(--bad)";
+    $("mark").innerHTML = ok
+      ? `<svg viewBox="0 0 20 20"><path d="M4 10.5l4 4 8-9" fill="none" stroke="currentColor" stroke-width="2"/></svg>`
+      : `<svg viewBox="0 0 20 20"><path d="M10 4v8M10 15v1.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>`;
+    $("title").textContent = title;
+    $("msg").textContent = msg;
+    $("sheet").classList.add("show");
+  }
+
+  $("close").onclick = () => $("sheet").classList.remove("show");
+  $("rescan").onclick = async () => { state = await go("Rescan"); pick = Math.min(pick, state.installs.length); render(); };
+  $("install").onclick = () => {
+    const sel = selected();
+    act("Install", sel ? pick : -1, sel ? "" : custom, !!(sel && sel.patched));
+  };
+  $("remove").onclick = () => {
+    const sel = selected();
+    act("Uninstall", sel ? pick : -1, sel ? "" : custom);
+  };
+
+  window.addEventListener("load", () => {
+    window.runtime.EventsOn("state", refresh);
+    window.runtime.EventsOn("done", (r) => show(r.ok, r.title, r.message));
+    refresh();
+  });
+</script>
+</body>
+</html>

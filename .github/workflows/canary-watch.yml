@@ -1,0 +1,52 @@
+name: Discord Canary watch
+
+# Early warning for Discord client changes: runs every 3 hours, compares Discord's
+# Canary builds with the last run and posts to CANARY_WEBHOOK_URL when they change.
+# The last-seen state lives on the `canary-state` branch so main stays clean.
+
+on:
+  schedule:
+    - cron: "17 */3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: canary-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/canary-watch
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Load last state
+        run: |
+          git fetch --depth=1 origin canary-state 2>/dev/null && git show FETCH_HEAD:canary-state.json > canary-state.json || echo "No previous state"
+
+      - name: Check Canary
+        env:
+          CANARY_WEBHOOK_URL: ${{ secrets.CANARY_WEBHOOK_URL }}
+        run: node .github/canary-watch/watch.mjs canary-state.json
+
+      - name: Save state
+        if: always()
+        run: |
+          [ -f canary-state.json ] || exit 0
+          cp canary-state.json /tmp/state.json
+          git config user.name "canary-watch"
+          git config user.email "canary-watch@users.noreply.github.com"
+          git switch --orphan canary-state-tmp
+          git rm -rfq --cached . >/dev/null 2>&1 || true
+          cp /tmp/state.json canary-state.json
+          git add canary-state.json
+          git commit -qm "Canary state $(date -u +%FT%TZ)"
+          git push -fq origin HEAD:canary-state

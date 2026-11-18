@@ -1,0 +1,133 @@
+name: Rebuild CloudCord iOS 331
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: cloudcord-ios-331-release
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Build CloudCord Runtime"]
+    branches: [main]
+    types: [completed]
+
+jobs:
+  build:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Download the completed runtime build
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: cloudcord-mobile-shared-runtime
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/cloudcord-runtime
+
+      - name: Verify runtime for packaging
+        env:
+          EXPECTED_RUNTIME_SOURCE: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [ -n "$EXPECTED_RUNTIME_SOURCE" ]; then
+            python3 ios/scripts/verify-runtime-artifact.py "$RUNNER_TEMP/cloudcord-runtime/dist"
+            cp "$RUNNER_TEMP/cloudcord-runtime/dist/cc.js" dist/cc.js
+          else
+            python3 ios/scripts/verify-runtime-artifact.py dist
+          fi
+
+      - name: Install build tools
+        run: |
+          brew install ldid
+          git clone --recursive --depth 1 https://github.com/theos/theos.git "$RUNNER_TEMP/theos"
+
+      - name: Download Discord 331 CloudCord base
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download ios-legacy-331 \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern cloudcord0-331.ipa \
+            --output Discord-331.0-base.ipa
+
+      - name: Build sideload runtime
+        working-directory: ios/native-ios
+        env:
+          THEOS: ${{ runner.temp }}/theos
+        run: |
+          set -euo pipefail
+          clone_ok=false
+          for attempt in 1 2 3; do
+            loader_headers="$RUNNER_TEMP/unbound-loader-ios-$attempt"
+            if git clone --depth 1 https://github.com/unbound-app/loader-ios.git "$loader_headers"; then
+              clone_ok=true
+              break
+            fi
+            sleep 5
+          done
+          test "$clone_ok" = true
+          test -d "$loader_headers/headers/jsi"
+          mkdir -p Headers/jsi
+          cp -R "$loader_headers/headers/jsi/." Headers/jsi/
+          sed -i '' 's/^BUNDLE_NAME = CloudCordResources$/BUNDLE_NAME = BunnyResources/' Makefile
+          sed -i '' 's/^TWEAK_NAME = CloudCordTweak$/LIBRARY_NAME = CloudCordTweak/' Makefile
+          sed -i '' 's#$(THEOS_MAKE_PATH)/tweak.mk#$(THEOS_MAKE_PATH)/library.mk#' Makefile
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path("Sources/Sideloading.x")
+          text = source.read_text().replace(
+              "NSMutableDictionary *info    = [%orig mutableCopy];",
+              "NSDictionary *originalInfo = %orig;\n    NSMutableDictionary *info = [originalInfo mutableCopy];",
+          )
+          source.write_text(text)
+          PY
+          cat > Sources/SubstrateCompat.m <<'OBJC'
+          #import <objc/runtime.h>
+          void MSHookMessageEx(Class targetClass, SEL selector, IMP replacement, IMP *original) {
+              Method method = class_getInstanceMethod(targetClass, selector);
+              if (!method) return;
+              IMP previous = method_getImplementation(method);
+              if (original) *original = previous;
+              method_setImplementation(method, replacement);
+          }
+          OBJC
+          make package FINALPACKAGE=1 CLOUDCORD_SAFE_UI=1
+
+      - name: Repackage Discord 331
+        run: |
+          python3 ios/scripts/package-cloudcord-ipa.py \
+            --discord-ipa Discord-331.0-base.ipa \
+            --discord-version 331.0 \
+            --runtime-deb "$(find ios/native-ios/packages -name '*.deb' -print -quit)" \
+            --output cloudcord0-331.ipa
+
+      - name: Verify Discord 331 broadcast entitlements
+        run: |
+          python3 ios/scripts/test-broadcast-capabilities.py
+          python3 ios/scripts/verify-broadcast-ipa.py cloudcord0-331.ipa
+          rm -rf "$RUNNER_TEMP/cloudcord-331-check"
+          unzip -q cloudcord0-331.ipa -d "$RUNNER_TEMP/cloudcord-331-check"
+          APP="$RUNNER_TEMP/cloudcord-331-check/Payload/Discord.app"
+          test -f "$APP/PlugIns/BroadcastUpload.appex/BroadcastUpload"
+          cmp dist/cc.js "$APP/BunnyResources.bundle/runtime.js"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CloudCord-iOS-331.0
+          path: cloudcord0-331.ipa
+
+      - name: Replace the public Discord 331 download
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ios-legacy-331
+          name: CloudCord iOS Legacy 331.0
+          make_latest: false
+          files: cloudcord0-331.ipa
