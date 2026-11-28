@@ -1,0 +1,19 @@
+{
+  "checkedAt": "2026-11-28T07:51:18.908Z",
+  "desktop": {
+    "win": "0.0.316",
+    "osx": "0.0.1428",
+    "linux": "1.0.2516"
+  },
+  "web": {
+    "scripts": 367,
+    "buildId": "681804",
+    "markers": {
+      "webpackChunks": true,
+      "react": true
+    },
+    "wasmChunks": [
+      "libdiscore-wasm-fetch"
+    ]
+  }
+}
